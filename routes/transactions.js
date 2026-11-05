@@ -17,6 +17,13 @@ function toTransaction(row) {
   };
 }
 
+// True only for a real calendar date in YYYY-MM-DD form
+// (new Date() alone would roll 2026-02-31 over to March 3)
+function isRealDate(text) {
+  const date = new Date(text);
+  return !isNaN(date) && date.toISOString().slice(0, 10) === text;
+}
+
 // Checks the request body in order and returns the first problem found,
 // or null when everything is valid. Cleans up ticker, type, account and comment.
 function validateTransaction(body) {
@@ -34,7 +41,7 @@ function validateTransaction(body) {
   }
 
   const { tradeDate, shares, priceCents } = body;
-  if (typeof tradeDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(tradeDate) || isNaN(new Date(tradeDate))) {
+  if (typeof tradeDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(tradeDate) || !isRealDate(tradeDate)) {
     return 'Trade date must be a real date in YYYY-MM-DD format';
   }
   if (!Number.isInteger(shares) || shares <= 0) {
@@ -78,12 +85,12 @@ router.post('/', (req, res) => {
 
   const { ticker, type, tradeDate, shares, priceCents, account, comment } = body;
 
-  // Sell rule: you can't sell more shares than this account holds
+  // Sell rule: you can't sell more shares than this account held on the trade date
   if (type === 'SELL') {
     const { held } = db.prepare(
       `SELECT COALESCE(SUM(CASE WHEN type = 'BUY' THEN shares ELSE -shares END), 0) AS held
-       FROM transactions WHERE ticker = ? AND account = ?`
-    ).get(ticker, account);
+       FROM transactions WHERE ticker = ? AND account = ? AND trade_date <= ?`
+    ).get(ticker, account, tradeDate);
     if (shares > held) {
       return res.status(400).json({
         error: `Cannot sell ${shares} shares of ${ticker}, only ${held} held in ${account}`,
